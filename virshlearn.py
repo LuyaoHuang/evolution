@@ -80,12 +80,17 @@ class virshcmdinfo:
                             if i not in self.optvalueinfos.values():
                                 self.optvalueinfos[str(n)] = i
 
-    def gencleancmdline(self, key, value):
+    def gencleancmdline(self, keys):
         ret = 'virsh %s' % self.subcmd
         for n in self.optvalueinfos:
-            if n == key:
-                ret += ' %s' % value
-            else:
+            find = 0
+            for k in keys:
+                if n == k[0]:
+                    ret += ' %s' % k[1]
+                    find = 1 
+                    break
+
+            if find != 1:
                 ret += ' %s' % self.optvalueinfos[n]
 
         for n in self.optinfos:
@@ -273,7 +278,7 @@ def catchcmdname(cmdline):
             if find == 1:
                 return i
 
-def genpossiblelabel(traindatas, string, strname, tarcmd, memory):
+def genpossiblelabel(traindatas, diff, tarcmd, memory):
     rets = []
     for data in traindatas:
         cmdinfo = virshcmdinfo(data[0])
@@ -285,20 +290,30 @@ def genpossiblelabel(traindatas, string, strname, tarcmd, memory):
             continue
 
         """ need check failed cmd? """
-        if data[2] == 0 and string in data[1].split():
-            if strname != "options":
-                if string in cmdinfo.optvalueinfos.values():
-                    for key in cmdinfo.optvalueinfos.keys():
-                        if cmdinfo.optvalueinfos[key] == string:
-                            tmpstr = cmdinfo.gencleancmdline(key, key[2:])
-                            labelp = "if %s value in '%s' output ?" % (strname, tmpstr)
-                            rets.append([[strname,"in2", cmdinfo, key],labelp])
+        keys = []
+        strings = []
+        if data[2] == 0:
+            for i in diff:
+                if i[0] != "options":
+                    if i[1] in cmdinfo.optvalueinfos.values():
+                        for key in cmdinfo.optvalueinfos.keys():
+                            if cmdinfo.optvalueinfos[key] == i[1]:
+                                keys.append([i[0], key])
+
+                    if i[1] in data[1].split():
+                        strings.append(i[0])
                 else:
-                    labelp = "if %s value in '%s' output ?" % (strname, data[0])
-                    rets.append([[strname,"in", cmdinfo],labelp])
-            else:
-                labelp = "if %s in '%s' output ?" % (string, data[0])
-                rets.append([[string,"in", cmdinfo],labelp])
+                    if i[1] in data[1].split():
+                        strings.append(i[1])
+
+        """ need check no strings ? """
+        if len(strings) > 0:
+            labelp = "if "
+            for i in strings:
+                labelp += "%s " % i 
+            labelp += "in %s output ?" % cmdinfo.gencleancmdline([[i[1], '$%s' % i[1][2:]] for i in keys])
+            rets.append([[strings, cmdinfo ,keys],labelp])
+
 
         """ TODO: need more """
 
@@ -317,20 +332,30 @@ def genpossiblelabel(traindatas, string, strname, tarcmd, memory):
             continue
 
         """ need check failed cmd? """
-        if data[2] == 0 and string in data[1].split():
-            if strname != "options":
-                if string in cmdinfo.optvalueinfos.values():
-                    for key in cmdinfo.optvalueinfos.keys():
-                        if cmdinfo.optvalueinfos[key] == string:
-                            tmpstr = cmdinfo.gencleancmdline(key, key[2:])
-                            labelp = "if %s value in '%s' output ?" % (strname, tmpstr)
-                            rets.append([[strname,"in2", cmdinfo, key],labelp])
+        keys = []
+        strings = []
+        if data[2] == 0:
+            for i in diff:
+                if i[0] != "options":
+                    if i[1] in cmdinfo.optvalueinfos.values():
+                        for key in cmdinfo.optvalueinfos.keys():
+                            if cmdinfo.optvalueinfos[key] == i[1]:
+                                keys.append([i[0], key])
+
+                    if i[1] in data[1].split():
+                        strings.append(i[0])
                 else:
-                    labelp = "if %s value in '%s' output ?" % (strname, data[0])
-                    rets.append([[strname,"in", cmdinfo],labelp])
-            else:
-                labelp = "if %s in '%s' output ?" % (string, data[0])
-                rets.append([[string,"in", cmdinfo],labelp])
+                    if i[1] in data[1].split():
+                        strings.append(i[1])
+
+        """ need check no strings ? """
+        if len(strings) > 0:
+            labelp = "if "
+            for i in strings:
+                labelp += "%s " % i 
+            labelp += "in %s output ?" % cmdinfo.gencleancmdline([[i[1], '$%s' % i[1][2:]] for i in keys])
+            rets.append([[strings, cmdinfo ,keys],labelp])
+
 
         """ TODO: need more """
 
@@ -357,42 +382,17 @@ def genpossiblelabels(traindatas, tarcmd, memory):
             memory.append(data)
 
     for datasuc in sucdata:
+        diff = []
         succmdinfo = virshcmdinfo(datasuc[0])
+        for opt in succmdinfo.optinfos:
+            diff.append(['options', opt])
+        for key in succmdinfo.optvalueinfos:
+            diff.append([key, succmdinfo.optvalueinfos[key]])
 
-        if len(faildata) > 0:
-            for datafail in faildata:
-                failcmdinfo = virshcmdinfo(datafail[0])
-                tmpdif = finddiff(failcmdinfo.cleancmdline,succmdinfo.cleancmdline)
-                for n in tmpdif:
-                    if n in succmdinfo.optinfos:
-                        diffs.append(['options',n])
-                        continue
-
-                    for key in succmdinfo.optvalueinfos:
-                        if n == succmdinfo.optvalueinfos[key]:
-                            diffs.append([key, n])
-                            break
-        if len(sucdata) > 1:
-            for datasuc2 in sucdata:
-                succmdinfo2 = virshcmdinfo(datasuc2[0])
-                tmpdif = finddiff(succmdinfo2.cleancmdline,succmdinfo.cleancmdline)
-                for n in tmpdif:
-                    if n in succmdinfo.optinfos:
-                        diffs.append(['options',n])
-                        continue
-
-                    for key in succmdinfo.optvalueinfos:
-                        if n == succmdinfo.optvalueinfos[key]:
-                            diffs.append([key, n])
-                            break
-        else:
-            for opt in succmdinfo.optinfos:
-                diffs.append(['options', opt])
-            for key in succmdinfo.optvalueinfos:
-                diffs.append([key, succmdinfo.optvalueinfos[key]])
+        diffs.append(diff)
 
     for diff in diffs:
-        label = genpossiblelabel(traindatas, diff[1], diff[0],tarcmd, memory)
+        label = genpossiblelabel(traindatas, diff, tarcmd, memory)
         rets.extend(label)
 
     return rets
@@ -410,36 +410,34 @@ def gendataset(traindatas, labels, tarcmd):
             tarcmdinfo = virshcmdinfo(data[0])
             continue
 
+    print labels
     for label in labels:
         find = 0
         for data in traindatas:
             tmpcmdinfo = virshcmdinfo(data[0])
-            if label[0][1] == "in":
-                if tmpcmdinfo.cleancmdline == label[0][2].cleancmdline:
-                    if label[0][0] in tarcmdinfo.optinfos:
-                        if label[0][0] in data[1]:
-                            dataset.append(1)
-                        else:
-                            dataset.append(0)
+            if len(label[0][2]) > 0:
+                tmplist = []
+                for string in label[0][2]:
+                    if string[0] in tarcmdinfo.optvalueinfos.keys():
+                        tmplist.append([string[1], tarcmdinfo.optvalueinfos[string[0]]])
+
+                tmpstr = label[0][1].gencleancmdline(tmplist)
+
+            else:
+                tmpstr = label[0][1].cleancmdline
+
+            if tmpstr == tmpcmdinfo.cleancmdline:
+                for i in label[0][0]:
+                    if tarcmdinfo.optvalueinfos[i] not in data[1]:
+                        dataset.append(0)
                         find = 1
                         break
-                    elif label[0][0] in tarcmdinfo.optvalueinfos.keys():
-                        if tarcmdinfo.optvalueinfos[label[0][0]] in data[1]:
-                            dataset.append(1)
-                        else:
-                            dataset.append(0)
-                        find = 1
-                        break
-            elif label[0][1] == "in2":
-                if label[0][0] in tarcmdinfo.optvalueinfos.keys():
-                    tmpstr = tmpcmdinfo.gencleancmdline(label[0][3], tarcmdinfo.optvalueinfos[label[0][0]])
-                    if tmpstr == tmpcmdinfo.cleancmdline:
-                        if tarcmdinfo.optvalueinfos[label[0][0]] in data[1]:
-                            dataset.append(1)
-                        else:
-                            dataset.append(0)
-                        find = 1
-                        break
+                if find != 1:
+                    dataset.append(1)
+                    find = 1
+
+            if find == 1:
+                break
 
         if find != 1:
             dataset.append(2)
@@ -515,17 +513,19 @@ def justexample():
     cmds3 = ['virsh list --all',
             'virsh start test4',
             'virsh net-list --all',
-            'virsh domifstat test4 vnet0',
+            'virsh domifstat test4 vnet1',
             'virsh domiflist test4',
             'virsh dominfo test4_123']
     cmds4 = ['virsh dumpxml test4',
-            'virsh domiflist test4',
-            'virsh domifstat test4 vnet0',
+            'virsh domiflist test4as',
+            'virsh list --all',
+            'virsh domifstat test4as vnet0',
             'virsh net-list --all',
             'virsh dominfo test4']
     cmds5 = ['virsh dumpxml test4',
             'virsh start testasdd --paused',
             'virsh domifstat test4 vnet0',
+            'virsh domiflist test4',
             'virsh net-list --all',
             'virsh domblklist test4',
             'virsh dominfo test3']
