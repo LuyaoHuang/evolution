@@ -11,6 +11,15 @@ import trees
 
 FILE1 = '/root/virsh.xml'
 
+#INFOCMD = ['cpu-stats','domdisplay','domfsinfo','domhostname','domid','domjobinfo',
+#           'domname','domuuid','dumpxml','iothreadinfo','migrate-getspeed','schedinfo',
+#           'vcpucount','vcpuinfo','vncdisplay','domblkerror','domblkinfo','domblklist',
+#           'domblkstat','domcontrol','domif-getlink','domifaddr','domiflist','domifstat',
+#           'dominfo','dommemstat','domstate','domstats','list']
+
+# vol cmd need impletment
+INFOCMD = ['list', 'snapshot-list', 'net-list', 'nwfilter-list', 'iface-list', 'nodedev-list', 'secret-list', 'pool-list', 'dumpxml', 'net-dumpxml', 'secret-dumpxml', 'pool-dumpxml', ]
+
 class virshcmdinfo:
     def __init__(self, string):
         self.subcmd = catchcmdname(string)
@@ -27,8 +36,14 @@ class virshcmdinfo:
         for n in self.optinfos:
             self.cleancmdline += ' %s' % n
 
+        self.optcmdline = self.genoptcmdline([])
+
     def getoptvaluelist(self):
-        out = subprocess.check_output(["virsh", self.subcmd, "--help"])
+        try:
+            out = subprocess.check_output(["virsh", self.subcmd, "--help"])
+        except subprocess.CalledProcessError as detail:
+            raise Failure
+
         find = 0
         for i in out.splitlines():
             if "OPTIONS" in i:
@@ -98,6 +113,100 @@ class virshcmdinfo:
         
         return ret
 
+    def genoptcmdline(self, keys):
+        ret = 'virsh %s' % self.subcmd
+        for n in self.optvalueinfos:
+            find = 0
+            for k in keys:
+                if n == k[0]:
+                    ret += ' %s %s' % (k[0], k[1])
+                    find = 1 
+                    break
+
+            if find != 1:
+                ret += ' %s %s' % (n ,self.optvalueinfos[n])
+
+        for n in self.optinfos:
+            ret += ' %s' % n
+        
+        return ret
+
+    def cmdequal(self, tarcmdline):
+        tmpcmd = virshcmdinfo(tarcmdline)
+
+        if self.subcmd != tmpcmd.subcmd:
+            return False
+        if self.optvalueinfos != tmpcmd.optvalueinfos:
+            return False
+        if self.optinfos != tmpcmd.optinfos:
+            return False
+
+        return True
+
+class virshhypothesis:
+    def __init__(self, srccmd, datas):
+        self.srccmdinfo = virshcmdinfo(srccmd)
+        self.hypothesis = self.genhypothesis(datas)
+
+    def genhypothesis(self, datas):
+        diff = []
+        rets = []
+        for opt in self.srccmdinfo.optinfos:
+            diff.append(['options', opt])
+        for key in self.srccmdinfo.optvalueinfos:
+            diff.append([key, self.srccmdinfo.optvalueinfos[key]])
+
+        for data in datas:
+            cmdinfo = virshcmdinfo(data[0])
+            if cmdinfo.subcmd == self.srccmdinfo.subcmd:
+                continue
+
+            """ need check failed cmd? """
+            strings = []
+            if data[2] != 0:
+                continue
+            for i in diff:
+                for line in range(len(data[1].splitlines())):
+                    if i[1] in data[1].splitlines()[line]:
+                        for word in range(len(data[1].splitlines()[line].split())):
+                            if word == i[1]:
+                                strings.append([i[1], line, word])
+
+            if len(strings) > 0:
+                rets.append([self.srccmdinfo, cmdinfo, strings])
+
+        return rets
+
+def genvirshhypothesis(traindatas, tarcmd, memory):
+    sucdata = []
+    faildata = []
+    hyps = []
+    for data in memory:
+        if tarcmd in data[0]:
+            if data[2] == 0:
+                sucdata.append(data)
+            else:
+                faildata.append(data)
+
+    for data in traindatas:
+        if tarcmd in data[0]:
+            if data[2] == 0:
+                sucdata.append(data)
+            else:
+                faildata.append(data)
+            memory.append(data)
+
+    for datasuc in sucdata:
+        hyp = virshhypothesis(datasuc[0], traindatas)
+        hyps.append(hyp)
+
+    vsl = version_space_learning(hyps, virshverfiy, virshgen)
+
+#def virshgen(hyps):
+#    for hyp in hyps:
+#        for i in hyp[0].optvalueinfos.keys():
+#            if hyp[0].optvalueinfos[i] in 
+
 def loadvirshcmd():
     fp = open(FILE1)
     tree = lxml.etree.parse(fp)
@@ -111,7 +220,6 @@ def loadvirshcmd():
             ret[str(i.tag)] = opt
 
     return ret
-
 
 def getmaninfo():
     return subprocess.check_output(["man", "virsh"])
@@ -278,6 +386,131 @@ def catchcmdname(cmdline):
             if find == 1:
                 return i
 
+def findinfo(tarstr, strings):
+    if tarstr in strings.split():
+        return True
+    else:
+        return False
+
+class virtEnv:
+    def __init__(self, infocmd=INFOCMD):
+        self.infocmd = infocmd
+        self.datas = self._gencurrentenv()
+
+    def _gencurrentenv(self):
+        def _subfunc(opt, cmd, cb, index):
+            tmpdict2 = {}
+            tmpstr = subprocess.check_output(cb.split())
+            members = [i.split()[index] for i in tmpstr.splitlines()]
+            for i in members:
+                tmpdict2[i] = subprocess.check_output(["virsh", "-q", cmd, opt, i])
+
+            tmpdict[cmd] = tmpdict2
+
+        tmpdict = {}
+        for cmd in self.infocmd:
+            cmdinfo = virshcmdinfo("virsh %s" % cmd)
+            if "--domain" in cmdinfo.optvaluelist:
+                _subfunc("--domain", cmd, "virsh -q list --all", 1)
+                continue
+            if "--network" in cmdinfo.optvaluelist:
+                _subfunc("--network", cmd, "virsh -q net-list --all", 0)
+                continue
+            if "--secret" in cmdinfo.optvaluelist:
+                _subfunc("--secret", cmd, "virsh -q secret-list", 0)
+                continue
+            if "--pool" in cmdinfo.optvaluelist:
+                _subfunc("--pool", cmd, "virsh -q pool-list --all", 0)
+                continue
+            if "--nwfilter" in cmdinfo.optvaluelist:
+                _subfunc("--nwfilter", cmd, "virsh -q nwfilter-list", 0)
+                continue
+#           if "--vol" in cmdinfo.optvaluelist:
+#               _subfunc("--vol", cmd, "virsh -q vol-list --all", 0)
+#               continue
+
+            if "--all" in cmdinfo.optlist:
+                tmpdict[cmd] = subprocess.check_output(["virsh", "-q", cmd, "--all"])
+            else:
+                tmpdict[cmd] = subprocess.check_output(["virsh", "-q", cmd])
+
+        return tmpdict
+
+    def updateData(self):
+        olddatas = self.datas
+        newdatas = self._gencurrentenv()
+        diff = {"new":{},"old":{}}
+
+        if olddatas == newdatas:
+            return diff
+
+        for i in newdatas.keys():
+            tmpnewdiff = []
+            tmpolddiff = []
+            if i not in olddatas.keys():
+                diff["new"][i] = newdatas[i]
+                continue
+            if newdatas[i] == olddatas[i]:
+                continue
+            if isinstance(newdatas[i], str):
+                newlines = newdatas[i].splitlines()
+                oldlines = olddatas[i].splitlines()
+                for lines in newlines:
+                    if lines not in oldlines:
+                        tmpnewdiff.append(lines) 
+                    else:
+                        oldlines.remove(lines)
+
+                for lines in oldlines:
+                    tmpolddiff.append(lines)
+
+                diff["new"][i] = tmpnewdiff
+                diff["old"][i] = tmpolddiff
+                continue
+            elif isinstance(newdatas[i], dict):
+                diff["new"][i] = {}
+                diff["old"][i] = {}
+                for sec in newdatas[i].keys():
+                    if sec not in olddatas[i].keys():
+                        diff["new"][i][sec] = newdatas[i][sec]
+                        continue
+                    if newdatas[i][sec] == olddatas[i][sec]:
+                        continue
+                    if not isinstance(newdatas[i][sec], str):
+                        raise Failure
+
+                    newlines = newdatas[i][sec].splitlines()
+                    oldlines = olddatas[i][sec].splitlines()
+                    for lines in newlines:
+                        if lines not in oldlines:
+                            tmpnewdiff.append(lines) 
+                        else:
+                            oldlines.remove(lines)
+
+                    for lines in oldlines:
+                        tmpolddiff.append(lines)
+
+                    diff["new"][i][sec] = tmpnewdiff
+                    diff["old"][i][sec] = tmpolddiff
+                    continue
+
+        self.datas = newdatas
+        return diff
+
+class virshlabel:
+    def __init__(self, strings, cmdinfo, keys):
+        self.strings = strings
+        self.cmdinfo = cmdinfo
+        self.keys = keys
+        self.labelforprint = self._genprint()
+
+    def _genprint(self):
+        labelp = "if "
+        for i in self.strings:
+            labelp += "%s " % i 
+        labelp += "in %s output ?" % self.cmdinfo.gencleancmdline([[i[1], '$%s' % i[1][2:]] for i in self.keys])
+        return labelp
+
 def genpossiblelabel(traindatas, diff, tarcmd, memory):
     rets = []
     for data in traindatas:
@@ -305,15 +538,8 @@ def genpossiblelabel(traindatas, diff, tarcmd, memory):
                 else:
                     if i[1] in data[1].split():
                         strings.append(i[1])
-
-        """ need check no strings ? """
-        if len(strings) > 0:
-            labelp = "if "
-            for i in strings:
-                labelp += "%s " % i 
-            labelp += "in %s output ?" % cmdinfo.gencleancmdline([[i[1], '$%s' % i[1][2:]] for i in keys])
-            rets.append([[strings, cmdinfo ,keys],labelp])
-
+            if len(strings) > 0:
+                rets.append(virshlabel(strings, cmdinfo, keys))
 
         """ TODO: need more """
 
@@ -348,14 +574,8 @@ def genpossiblelabel(traindatas, diff, tarcmd, memory):
                     if i[1] in data[1].split():
                         strings.append(i[1])
 
-        """ need check no strings ? """
-        if len(strings) > 0:
-            labelp = "if "
-            for i in strings:
-                labelp += "%s " % i 
-            labelp += "in %s output ?" % cmdinfo.gencleancmdline([[i[1], '$%s' % i[1][2:]] for i in keys])
-            rets.append([[strings, cmdinfo ,keys],labelp])
-
+            if len(strings) > 0:
+                rets.append(virshlabel(strings, cmdinfo, keys))
 
         """ TODO: need more """
 
@@ -410,30 +630,32 @@ def gendataset(traindatas, labels, tarcmd):
             tarcmdinfo = virshcmdinfo(data[0])
             continue
 
-    print labels
     for label in labels:
         find = 0
         for data in traindatas:
+            if data[2] != 0:
+                continue
             tmpcmdinfo = virshcmdinfo(data[0])
-            if len(label[0][2]) > 0:
+            if len(label.keys) > 0:
                 tmplist = []
-                for string in label[0][2]:
+                for string in label.keys:
                     if string[0] in tarcmdinfo.optvalueinfos.keys():
                         tmplist.append([string[1], tarcmdinfo.optvalueinfos[string[0]]])
 
-                tmpstr = label[0][1].gencleancmdline(tmplist)
+                tmpstr = label.cmdinfo.gencleancmdline(tmplist)
 
             else:
-                tmpstr = label[0][1].cleancmdline
+                tmpstr = label.cmdinfo.cleancmdline
 
-            if tmpstr == tmpcmdinfo.cleancmdline:
-                for i in label[0][0]:
-                    if tarcmdinfo.optvalueinfos[i] not in data[1]:
-                        dataset.append(0)
+            if tmpcmdinfo.cmdequal(tmpstr):
+                for i in label.strings:
+                    print tarcmdinfo.optvalueinfos[i]
+                    if not findinfo(tarcmdinfo.optvalueinfos[i], data[1]):
+                        dataset.append(1)
                         find = 1
                         break
                 if find != 1:
-                    dataset.append(1)
+                    dataset.append(0)
                     find = 1
 
             if find == 1:
@@ -449,10 +671,57 @@ def gendataset(traindatas, labels, tarcmd):
             dataset.append('fail')
         return dataset
 
+def checklabelresult(tree, fulcmd, labels):
+    tarcmdinfo = virshcmdinfo(fulcmd)
+
+    if len(tree.keys()) != 1:
+        raise Failure
+
+    print "check %s" % tree.keys()[0]
+    for l in labels:
+        if tree.keys()[0] == l[1]:
+            label = l
+            break
+
+    if not label:
+        raise Failure
+
+    tmplist = []
+    for string in label[0][2]:
+        if string[0] in tarcmdinfo.optvalueinfos.keys():
+            tmplist.append([string[1], tarcmdinfo.optvalueinfos[string[0]]])
+
+    tmpcmd = label[0][1].genoptcmdline(tmplist)
+    dataset = gendata(tmpcmd)
+    find = 0
+    if dataset[2] != 0:
+        result = 1
+    else:
+        for i in label[0][0]:
+            try:
+                if not findinfo(tarcmdinfo.optvalueinfos[i], dataset[1]):
+                    result = 1
+                    find = 1
+                    break
+            except KeyError:
+                result = 1
+                find = 1
+
+        if find != 1:
+            result = 0
+
+    nextone = tree.values()[0][result]
+    if isinstance(nextone, str):
+        return nextone
+    elif isinstance(nextone, dict):
+        return checklabelresult(nextone, fulcmd, labels)
+    else:
+        raise Failure
+
 def getprintlabel(labels):
     rets=[]
     for label in labels:
-        rets.append(label[1])
+        rets.append(label.labelforprint)
 
     return rets
 
@@ -460,8 +729,8 @@ def removeduplabel(labels):
     newlabels = []
     labelps = {}
     for label in labels:
-        if label[1] not in labelps.keys():
-            labelps[label[1]] = 1
+        if label.labelforprint not in labelps.keys():
+            labelps[label.labelforprint] = 1
             newlabels.append(label)
 
     return newlabels
@@ -470,18 +739,16 @@ def trylearn(traindatas,tarcmd):
     datasets = []
     labels = []
     memory = []
+
     for traindata in traindatas:
         labels.extend(genpossiblelabels(traindata, tarcmd, memory))
 
-    print labels
     labels = removeduplabel(labels)
-    print labels
 
     for traindata in traindatas:
         dataset = gendataset(traindata, labels, tarcmd)
         datasets.append(dataset)
-    labelsforpr = getprintlabel(labels)
-    return datasets, labelsforpr
+    return datasets, labels
 
 def managelearn(traindatas, tarcmd):
     pass
@@ -501,12 +768,15 @@ def justexample():
     cmds1 = ['virsh list --all',
             'virsh domiflist test4-clone',
             'virsh domifstat test4-clone vnet1',
+            'virsh memtune test4-clone vnet1',
             'virsh net-list --all',
+            'virsh dominfo testaaa4',
             ]
     cmds2 = ['virsh list --all',
             'virsh start test4-clone2',
             'virsh net-list --all',
-            'virsh domifstat test4-clone2 vnet2',
+            'virsh domifstat test4-clone2 vnet1',
+            'virsh memtune test4-clone2 vnet1',
             'virsh domiflist test4-clone2',
             'virsh dominfo rhel7.0']
 
@@ -514,20 +784,21 @@ def justexample():
             'virsh start test4',
             'virsh net-list --all',
             'virsh domifstat test4 vnet1',
+            'virsh memtune test4',
             'virsh domiflist test4',
             'virsh dominfo test4_123']
     cmds4 = ['virsh dumpxml test4',
             'virsh domiflist test4as',
             'virsh list --all',
             'virsh domifstat test4as vnet0',
+            'virsh memtune test4as',
             'virsh net-list --all',
-            'virsh dominfo test4']
+            'virsh dominfo test433']
     cmds5 = ['virsh dumpxml test4',
             'virsh start testasdd --paused',
             'virsh domifstat test4 vnet0',
-            'virsh domiflist test4',
-            'virsh net-list --all',
-            'virsh domblklist test4',
+            'virsh memtune test4 -1',
+            'virsh list --all',
             'virsh dominfo test3']
     traindatas = []
     traindata = []
@@ -553,11 +824,13 @@ def justexample():
     traindatas.append(traindata)
     traindata = []
 
-    dataset, label = trylearn(traindatas, "domifstat")
+    dataset, labels = trylearn(traindatas, "memtune")
+    labelsforpr = getprintlabel(labels)
     print dataset
-    print label
-    mytree = trees.createtree(dataset,label)
+    print labelsforpr
+    mytree = trees.createtree(dataset,labelsforpr)
     print mytree
     if isinstance(mytree, str):
-        os.exit(1)
+        sys.exit(1)
+#    print checklabelresult(mytree, "virsh domiftune test4 vnet0", labels)
     trees.createplot(mytree)
