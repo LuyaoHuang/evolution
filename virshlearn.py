@@ -532,10 +532,9 @@ def searchinxml(xml, target, xpath='', ret=[]):
 #______________Logical part__________________________
 
 class logicalExp:
-    def __init__(self, name, paradict, cb):
+    def __init__(self, name, paradict):
         self.name = name
         self.paradict = paradict
-        self.cb = cb
 
     def __call__(self, paradict=None):
         if paradict == None:
@@ -545,8 +544,7 @@ class logicalExp:
             if isinstance(paradict[i], logicalExp):
                 paradict[i] = paradict[i]()
 
-#       print paradict
-        return self.cb(paradict)
+        return self.subfunc(paradict)
 
     def __str__(self):
         first = True
@@ -562,7 +560,8 @@ class logicalExp:
 
         ret += ")"
         return ret
-    def replace(self, replacedict):
+
+    def replace(self, replacedict, env=None):
         for source in replacedict.keys():
             for d,x in self.paradict.items():
                 if isinstance(x, str):
@@ -576,162 +575,270 @@ class logicalExp:
                         self.paradict[d] = x.replace(source, replacedict[source])
 
                 if isinstance(x, logicalExp):
-                    x.replace(replacedict)
+                    x.replace(replacedict, env=env)
 
-def Instrings(paradict):
-    if "target" not in paradict.keys():
-        return False
-    if "source" not in paradict.keys():
-        return False
+                """ TODO: use a more general env """
+                if isinstance(x, virtEnv):
+                    if env != None:
+                        self.paradict[d] = env
 
-    if isinstance(paradict["source"], str):
-        if paradict["target"] in paradict["source"].split():
+    def subfunc(self, paradict):
+        raise NotImplementedError
+
+class LEin(logicalExp):
+    def __init__(self, paradict=None):
+        if paradict != None:
+            logicalExp.__init__(self, "In", paradict)
+        else:
+            logicalExp.__init__(self, "In", {"target": '', "source": ''})
+
+    def subfunc(self, paradict):
+        if "target" not in paradict.keys():
+            return False
+        if "source" not in paradict.keys():
+            return False
+
+        if isinstance(paradict["source"], str):
+            if paradict["target"] in paradict["source"].split():
+                return True
+            else:
+                return False
+        elif isinstance(paradict["source"], list):
+            for i in paradict["source"]:
+                if paradict["target"] in i.split():
+                    return True
+
+            return False
+        else:
+            return False
+
+class LEinrow(logicalExp):
+    def __init__(self, paradict=None):
+        if paradict != None:
+            logicalExp.__init__(self, "InRow", paradict)
+        else:
+            logicalExp.__init__(self, "InRow", {"target": '', "source": '', "row": ''})
+
+    def subfunc(self, paradict):
+        if "target" not in paradict.keys():
+            return False
+        if "source" not in paradict.keys():
+            return False
+        if "row" not in paradict.keys():
+            return False
+
+        if paradict["target"] in paradict["source"].splitlines()[int(paradict["row"])]:
             return True
         else:
-#            print "target %s not in source %s" % (paradict["target"], paradict["source"])
             return False
-    elif isinstance(paradict["source"], list):
-        for i in paradict["source"]:
-            if paradict["target"] in i.split():
-                return True
 
-#        print "target %s not in source" % paradict["target"]
-        return False
-    else:
-        return False
+class LEincolumn(logicalExp):
+    def __init__(self, paradict=None):
+        if paradict != None:
+            logicalExp.__init__(self, "InColumn", paradict)
+        else:
+            logicalExp.__init__(self, "InColumn", {"target": '', "source": '', "column": ''})
 
-LEin = logicalExp("In", {"target": '', "source": ''}, Instrings)
+    def subfunc(self, paradict):
+        if "target" not in paradict.keys():
+            return False
+        if "source" not in paradict.keys():
+            return False
+        if "column" not in paradict.keys():
+            return False
 
-def InRows(paradict):
-    if "target" not in paradict.keys():
-        return False
-    if "source" not in paradict.keys():
-        return False
-    if "row" not in paradict.keys():
-        return False
+        if paradict["target"] in [i.split()[int(paradict["column"])] for i in paradict["source"].splitlines()]:
+            return True
+        else:
+            return False
 
-    if paradict["target"] in paradict["source"].splitlines()[int(paradict["row"])]:
-        return True
-    else:
-        return False
+class LEinpath(logicalExp):
+    def __init__(self, paradict=None):
+        if paradict != None:
+            logicalExp.__init__(self, "InPath", paradict)
+        else:
+            logicalExp.__init__(self, "InPath", {"target": '', "source": '', "row": '', "column": ''})
 
-LEinrow = logicalExp("InRow", {"target": '', "source": '', "row": ''}, InRows)
+    def subfunc(self, paradict):
+        if "target" not in paradict.keys():
+            return False
+        if "source" not in paradict.keys():
+            return False
+        if "row" not in paradict.keys():
+            return False
+        if "column" not in paradict.keys():
+            return False
 
-def InColumn(paradict):
-    if "target" not in paradict.keys():
-        return False
-    if "source" not in paradict.keys():
-        return False
-    if "column" not in paradict.keys():
-        return False
+        if paradict["target"] == paradict["source"].splitlines()[int(paradict["row"])].split()[int(paradict["column"])]:
+            return True
+        else:
+            return False
 
-    if paradict["target"] in [i.split()[int(paradict["column"])] for i in paradict["source"].splitlines()]:
-        return True
-    else:
-        return False
+class LEfromenv(logicalExp):
+    def __init__(self, paradict=None):
+        if paradict != None:
+            logicalExp.__init__(self, "fromEnv", paradict)
+        else:
+            logicalExp.__init__(self, "fromEnv", {"env": '', "path": ''})
 
-LEincolumn = logicalExp("InColumn", {"target": '', "source": '', "column": ''}, InColumn)
+    def subfunc(self, paradict):
+        if "env" not in paradict.keys():
+            return False
+        if "path" not in paradict.keys():
+            return False
 
-def InPath(paradict):
-    if "target" not in paradict.keys():
-        return False
-    if "source" not in paradict.keys():
-        return False
-    if "row" not in paradict.keys():
-        return False
-    if "column" not in paradict.keys():
-        return False
+        ret = paradict["env"].getdatabypath(paradict["path"])
+        return ret
 
-    if paradict["target"] == paradict["source"].splitlines()[int(paradict["row"])].split()[int(paradict["column"])]:
-        return True
-    else:
-        return False
+class LEcmd(logicalExp):
+    def __init__(self, paradict=None):
+        if paradict != None:
+            logicalExp.__init__(self, "cmd", paradict)
+        else:
+            logicalExp.__init__(self, "cmd", {"cmd": '', "ret": '', "output": ''})
 
-LEinpath = logicalExp("InPath", {"target": '', "source": '', "row": '', "column": ''}, InPath)
+    def subfunc(self, paradict):
+        if "cmd" not in paradict.keys():
+            return False
+        if "ret" not in paradict.keys():
+            return False
+        if "output" not in paradict.keys():
+            return False
 
-def fromEnv(paradict):
-    if "env" not in paradict.keys():
-        return False
-    if "path" not in paradict.keys():
-        return False
+        try:
+            out = subprocess.check_output(paradict["cmd"].split(), stderr=subprocess.STDOUT)
+            ret = 0
+        except subprocess.CalledProcessError as detail:
+            out = detail.output
+            ret = 1
 
-    ret = paradict["env"].getdatabypath(paradict["path"])
-    return ret
+        if ret == int(paradict["ret"]) and out == paradict["output"]:
+            return True
+        else:
+            return False
 
-LEfromenv = logicalExp("fromEnv", {"env": '', "path": ''}, fromEnv)
+class LEnegation(logicalExp):
+    def __init__(self, paradict=None):
+        if paradict != None:
+            logicalExp.__init__(self, "negation", paradict)
+        else:
+            logicalExp.__init__(self, "negation", {"target": ''})
 
-def cmd(paradict):
-    if "cmd" not in paradict.keys():
-        return False
-    if "ret" not in paradict.keys():
-        return False
-    if "output" not in paradict.keys():
-        return False
+    def subfunc(self, paradict):
+        if "target" not in paradict.keys():
+            return False
 
-    try:
-        out = subprocess.check_output(paradict["cmd"].split(), stderr=subprocess.STDOUT)
-        ret = 0
-    except subprocess.CalledProcessError as detail:
-        out = detail.output
-        ret = 1
-
-    if ret == int(paradict["ret"]) and out == paradict["output"]:
-        return True
-    else:
-        return False
-
-LEcmd = logicalExp("cmd", {"cmd": '', "ret": '', "output": ''}, cmd)
-
-def negation(paradict):
-    if "target" not in paradict.keys():
-        return False
-
-    if paradict["target"] == False:
-        return True
-    else:
-        return False
-
-LEnegation = logicalExp("negation", {"target": ''}, negation)
+        if paradict["target"] == False:
+            return True
+        else:
+            return False
 
 #____________________________________________________
 
-def tmpmergepara(hypothesis):
-    def _parse(data, opt, target):
-        count = 0
-        for i in data.keys():
-            if isinstance(data[i], str):
-                if opt in data[i]:
-                    data[i] = data[i].replace(opt, target)
-                    count += 1
+class hypothesis:
+    def __init__(self, leset=None, result=None, cmd=None, env=None):
+        if leset is None:
+            self.leset = []
+        else:
+            self.leset = leset
+        self.result = result
+        self.cmd = cmd
+        self.env = env
 
-            if isinstance(data[i], logicalExp):
-                count += _parse(data[i].paradict, opt, target)
+    def append(self, le):
+        self.leset.append(le)
 
-        return count
+    def tmpmergepara(self):
+        def _parse(data, opt, target):
+            count = 0
+            for i in data.keys():
+                if isinstance(data[i], str):
+                    if opt in data[i]:
+                        data[i] = data[i].replace(opt, target)
+                        count += 1
 
-    index = 1
-    cmd = hypothesis[-1].paradict["cmd"]
+                if isinstance(data[i], logicalExp):
+                    count += _parse(data[i].paradict, opt, target)
 
-    if "virsh" in cmd.split()[0]:
-        virshinfo = virshcmdinfo(cmd)
-        opts = [i for i in virshinfo.optvalueinfos.values()]
-    else:
-        opts = cmd.split()
+            return count
 
-    for opt in opts:
-        count = 0
-        for i in hypothesis[:-1]:
-            count += _parse(i.paradict, opt, "$X%s" % index)
+        index = 1
+        cmd = self.result.paradict["cmd"]
 
-        if count != 0 or len(hypothesis) == 1:
-            _parse(hypothesis[-1].paradict, opt, "$X%s" % index)
-            index += 1
+        if "virsh" in cmd.split()[0]:
+            virshinfo = virshcmdinfo(cmd)
+            opts = virshinfo.optvalueinfos.values()
+        else:
+            opts = cmd.split()
 
-def mergehypothesis(hypothesises):
-    for i in hypothesises:
-        for n in hypothesises.remove(i):
-            pass
-            
+        for opt in opts:
+            count = 0
+            for i in self.leset:
+                count += _parse(i.paradict, opt, "$X%s" % index)
+
+            if count != 0 or self.leset == []:
+                _parse(self.result.paradict, opt, "$X%s" % index)
+                index += 1
+
+    def mergehypothesis(hypothesises):
+        for i in hypothesises:
+            for n in hypothesises.remove(i):
+                pass
+
+    def printhypothesis(self):
+        print "hypothesis:"
+        for n in self.leset:
+            print n
+
+        print self.result
+
+    def checkhypothesis(self, env, data):
+        """ return 0 for sucess, 1 for fail and 2 for not satisfy """
+        ret = []
+        cmd = self.result.paradict["cmd"]
+        stolen = {}
+        if not cmdmatch(cmd, data[0], stolen):
+            return 2
+
+        tmpleset = deepcopy(self.leset)
+        for i in tmpleset:
+            i.replace(stolen, env=env)
+            if not i():
+                return 2
+
+        result = deepcopy(self.result)
+        result.replace(stolen, env=env)
+
+        if result.paradict["ret"] != data[1]:
+            print "return number not except"
+            return 1
+        if len(data[2]) > 20 and result.paradict["ret"] == 0:
+            """TODO: find a way to check if it is right"""
+            print "looks like a getinfo type cmd"
+            return 0
+        if result.paradict["output"] != data[2]:
+            print "output not except"
+            return 1
+
+        return 0
+
+    def foundposcmd(self, env):
+        def _deepcheck(source, target):
+            if isinstance(source, logicalExp):
+                for n in source.paradict.values():
+                    if target not in n:
+                        pass
+        if not isinstance(self.result, logicalExp):
+            print "error"
+            return
+
+        retcmd = self.result.paradict['cmd']
+        for n in retcmd.split():
+            if "$X" in n:
+                for i in self.leset:
+                    _deepcheck(i, n)
+
+
 
 def cmdmatch(source, target, ret):
     srclist = source.split()
@@ -751,163 +858,156 @@ def cmdmatch(source, target, ret):
 
     return True
 
-def checkhypothesis(env, hypothesis, data):
-    """ return 0 for sucess, 1 for fail and 2 for not satisfy """
-    ret = []
-    cmd = hypothesis[-1].paradict["cmd"]
-    stolen = {}
-    if not cmdmatch(cmd, data[0], stolen):
-        return 2
+def revisedhypothesis(hyp, hypothesises, data, env):
+    if "virsh" in data[0].split()[0]:
+        virshinfo = virshcmdinfo(data[0])
+        poslist = virshinfo.optvalueinfos.values()
+    else:
+        poslist = data[0].split()[1:]
 
-    tmphypothesis = deepcopy(hypothesis)
-    for i in tmphypothesis:
-        if i.name == "cmd":
+    for i in poslist:
+        tmplist = env.searchdata(i)
+        if tmplist == []:
             continue
+        for n in tmplist:
+            if "Xpath" in n:
+                pass
 
-        i.replace(stolen)
-        ret.append(i())
 
-    if False in ret:
-        return 2
 
-    result = tmphypothesis[-1]
-    result.replace(stolen)
+def genhypothesisV2(env, cmd, hypothesises):
+    """ TODO: split sub cmd and options """
+    mainprocess = cmd.split()[0]
+    subcmd = cmd.split()[1]
 
-    if result.paradict["ret"] != data[1]:
-        print "return number not except"
-        return 1
-    if len(data[2]) > 20 and result.paradict["ret"] == 0:
-        print "looks like a getinfo type cmd"
-        return 0
-    if result.paradict["output"] != data[2]:
-        print "output not except"
-        return 1
+    if mainprocess not in hypothesises.keys():
+        hypothesises[str(mainprocess)] = {}
 
-    return 0
+    if subcmd not in hypothesises[mainprocess]:
+        hypothesises[mainprocess][subcmd] = []
 
-def genhypothesis(env, basecmds, options):
-    hypothesises = []
-    sucopts = []
-    failopts = []
-    tmpoptions = options
-    while(tmpoptions != []):
-        for i in tmpoptions:
-            hypothesis = []
-            tmpcmd = "%s %s" % (basecmds, i)
-            try:
-                out = subprocess.check_output(tmpcmd.split(), stderr=subprocess.STDOUT)
-                ret = 0
-            except subprocess.CalledProcessError as detail:
-                out = detail.output
-                ret = 1
-            data = [tmpcmd, ret, out]
+    subhypothesises = hypothesises[mainprocess][subcmd]
 
-            for hyp in hypothesises:
-                tmpret = checkhypothesis(env, hyp, data)
-                if tmpret == 0:
-                    print "a good hypothesis for a case"
-                    hypothesis = hyp
-                    tmpoptions.remove(i)
-                    break
-                elif tmpret == 2:
-                    print "a case not cover"
-                    print tmpcmd
-                    print out
-                    continue
+    try:
+        out = subprocess.check_output(cmd.split(), stderr=subprocess.STDOUT)
+        ret = 0
+    except subprocess.CalledProcessError as detail:
+        out = detail.output
+        ret = 1
+    data = [cmd, ret, out]
+
+    hyp = hypothesis(cmd=data, env=deepcopy(env))
+
+    for tmphyp in subhypothesises:
+        tmpret = tmphyp.checkhypothesis(env, data)
+        if tmpret == 0:
+            print "a good hypothesis for a case"
+            return True
+        elif tmpret == 2:
+            print "a case not cover"
+            print cmd
+            print out
+            continue
+        else:
+            print "result not correct"
+            print cmd
+            print out
+#            if revisedhypothesis(tmphyp, subhypothesises, data, env):
+#                return True
+#            else:
+#                return False
+            return False
+
+    if ret == 0:
+        possible = {}
+        """ TODO: split sub cmd and options """
+        for opt in cmd.split()[2:]:
+            tmpret = env.searchdata(opt)
+            if tmpret is not None:
+                possible[opt] = tmpret
+
+        if len(possible) == 0:
+            """ TODO """
+            return False
+
+        else:
+            for d,x in possible.items():
+                for member in x:
+                    LEfromenvtmp = LEfromenv({'env':env, 'path': member})
+                    LEintmp = LEin({'source': LEfromenvtmp, 'target': d})
+                    hyp.append(LEintmp)
+
+            LEcmdtmp = LEcmd({'cmd': cmd, 'ret': ret, 'output': out})
+            hyp.result = LEcmdtmp
+            hyp.tmpmergepara()
+            print "create a hypothesis for a valid case"
+            hyp.printhypothesis()
+            subhypothesises.append(hyp)
+    else:
+        for tmphyp in subhypothesises:
+            tmpdict = {}
+            if not cmdmatch(tmphyp.result.paradict['cmd'], cmd, tmpdict):
+                continue
+            for le in tmphyp.leset:
+                lecpy = deepcopy(le)
+                lecpy.replace(tmpdict)
+                if lecpy():
+                    hyp.append(lecpy)
                 else:
-                    print "result not correct"
-                    print out
-                    return
+                    LEnegationtmp = LEnegation({'target': lecpy})
+                    hyp.append(LEnegationtmp)
 
-            if not hypothesis:
-                if ret == 0:
-                    possible = {}
-                    for opt in i.split():
-                        tmpret = env.searchdata(opt)
-                        if tmpret is not None:
-                            possible[opt] = tmpret
-                    if len(possible) == 0:
-                        """ TODO """
-                        continue
+            LEcmdtmp = LEcmd({'cmd': cmd, 'ret': ret, 'output': out})
+            hyp.result = LEcmdtmp
+            hyp.tmpmergepara()
 
-                    else:
-                        for d,x in possible.items():
-                            for member in x:
-                                LEintmp = deepcopy(LEin)
-                                LEfromenvtmp = deepcopy(LEfromenv)
-                                LEfromenvtmp.paradict = {'env':env, 'path': member}
-                                LEintmp.paradict = {'source': LEfromenvtmp, 'target': d}
-                                hypothesis.append(LEintmp)
+            if hyp.checkhypothesis(env, data) == 0:
+                print "a good hypothesis for a invalid case"
+                hyp.printhypothesis()
+                subhypothesises.append(hyp)
+                return True
+            else:
+                hyp.leset = []
+                hyp.result = None
 
-                        LEcmdtmp = deepcopy(LEcmd)
-                        LEcmdtmp.paradict = {'cmd': tmpcmd, 'ret': ret, 'output': out}
-                        hypothesis.append(LEcmdtmp)
-                        tmpmergepara(hypothesis)
-                        print "create a hypothesis for a valid case"
-                        printhypothesis(hypothesis)
-                        hypothesises.append(hypothesis)
-                        tmpoptions.remove(i)
-                else:
-                    if not hypothesises:
-                        continue
+        """ just create a empty hypothesis for it, will get fix if it was wrong """
+        LEcmdtmp = LEcmd({'cmd': cmd, 'ret': ret, 'output': out})
+        hyp.result = LEcmdtmp
+        hyp.tmpmergepara()
+        print "create a tmp hypothesis for a invalid case"
+        hyp.printhypothesis()
+        subhypothesises.append(hyp)
 
-                    for hyp in hypothesises:
-                        tmpdict = {}
-                        if not cmdmatch(hyp[-1].paradict['cmd'], tmpcmd, tmpdict):
-                            continue
-                        for le in hyp[:-1]:
-                            lecpy = deepcopy(le)
-                            lecpy.replace(tmpdict)
-                            if lecpy():
-                                hypothesis.append(lecpy)
-                            else:
-                                LEnegationtmp = deepcopy(LEnegation)
-                                LEnegationtmp.paradict = {'target': lecpy}
-                                hypothesis.append(LEnegationtmp)
-
-                        LEcmdtmp = deepcopy(LEcmd)
-                        LEcmdtmp.paradict = {'cmd': tmpcmd, 'ret': ret, 'output': out}
-                        hypothesis.append(LEcmdtmp)
-                        tmpmergepara(hypothesis)
-
-                        if checkhypothesis(env, hypothesis, data) == 0:
-                            print "a good hypothesis for a invalid case"
-                            printhypothesis(hypothesis)
-                            hypothesises.append(hypothesis)
-                            tmpoptions.remove(i)
-                            break
-                        else:
-                            hypothesis = []
-
-                    if not hypothesis:
-                        """ just create a empty hypothesis for it, will get fix if it was wrong """
-                        LEcmdtmp = deepcopy(LEcmd)
-                        LEcmdtmp.paradict = {'cmd': tmpcmd, 'ret': ret, 'output': out}
-                        hypothesis.append(LEcmdtmp)
-                        tmpmergepara(hypothesis)
-                        print "create a tmp hypothesis for a invalid case"
-                        printhypothesis(hypothesis)
-                        hypothesises.append(hypothesis)
-
-    return hypothesises
-
+    return True
 
 def tmpexample():
     env = virtEnv()
+    hypothesises = {}
     subcmd = "virsh domiftune"
     options = ["test4", "rhel7.0 52:54:00:67:a9:e7", "rhel7.0", "rhel7.0 123"]
-    ret = genhypothesis(env, subcmd, options)
-    if ret is not None:
-        printhypothesises(ret)
+    for i in options:
+        cmd = "%s %s" % (subcmd, i)
+        if not genhypothesisV2(env, cmd, hypothesises):
+            print "error"
+            return
+
+    while(True):
+        cmd = genvirshcmd(subcmd, options, hypothesises, env)
+        if cmd == None:
+            break
+
+    printhypothesises(hypothesises)
 
 def printhypothesises(hypothesises):
-    for i in hypothesises:
-        printhypothesis(i)
+    for i in hypothesises.values():
+        for n in i.values():
+            for m in n:
+                m.printhypothesis()
 
-def printhypothesis(hypothesis):
-    print "hypothesis:"
-    for n in hypothesis:
-        print n
+def genvirshcmd(subcmd, options, hypothesises, env):
+    pass
+    
+
 
 #___________________________________________
 
