@@ -585,6 +585,22 @@ class logicalExp:
     def subfunc(self, paradict):
         raise NotImplementedError
 
+    def genrandom(self, paradict=None, env=None):
+        if paradict == None:
+            paradict = deepcopy(self.paradict)
+
+        for i in paradict.keys():
+            if isinstance(paradict[i], logicalExp):
+                paradict[i] = paradict[i].genrandom()
+
+            elif isinstance(paradict[i], virtEnv) and env != None:
+                paradict[i] = env
+
+        return self.genposval(paradict)
+
+    def genposval(self, paradict):
+        raise NotImplementedError
+
 class LEin(logicalExp):
     def __init__(self, paradict=None):
         if paradict != None:
@@ -612,6 +628,22 @@ class LEin(logicalExp):
         else:
             return False
 
+    def genposval(self, paradict):
+        if "target" not in paradict.keys():
+            return
+        if "source" not in paradict.keys():
+            return
+
+        if "$X" not in paradict["target"]:
+            return
+
+        if isinstance(paradict["source"], str):
+            return random.choice(paradict["source"].split())
+        elif isinstance(paradict["source"], list):
+            return random.choice(random.choice(paradict["source"].split()))
+        else:
+            raise TypeError, 'only support list and str type'
+
 class LEinrow(logicalExp):
     def __init__(self, paradict=None):
         if paradict != None:
@@ -632,6 +664,22 @@ class LEinrow(logicalExp):
         else:
             return False
 
+    def genposval(self, paradict):
+        if "target" not in paradict.keys():
+            return
+        if "source" not in paradict.keys():
+            return
+        if "row" not in paradict.keys():
+            return
+
+        if "$X" not in paradict["target"]:
+            return
+
+        if isinstance(paradict["source"], str):
+            return random.choice(paradict["source"].splitlines()[int(paradict["row"])])
+        else:
+            raise TypeError, 'only support str type'
+
 class LEincolumn(logicalExp):
     def __init__(self, paradict=None):
         if paradict != None:
@@ -651,6 +699,22 @@ class LEincolumn(logicalExp):
             return True
         else:
             return False
+
+    def genposval(self, paradict):
+        if "target" not in paradict.keys():
+            return
+        if "source" not in paradict.keys():
+            return
+        if "column" not in paradict.keys():
+            return
+
+        if "$X" not in paradict["target"]:
+            return
+
+        if isinstance(paradict["source"], str):
+            return random.choice([i.split()[int(paradict["column"])] for i in paradict["source"].splitlines()])
+        else:
+            raise TypeError, 'only support str type'
 
 class LEinpath(logicalExp):
     def __init__(self, paradict=None):
@@ -674,6 +738,24 @@ class LEinpath(logicalExp):
         else:
             return False
 
+    def genposval(self, paradict):
+        if "target" not in paradict.keys():
+            return
+        if "source" not in paradict.keys():
+            return
+        if "column" not in paradict.keys():
+            return
+        if "row" not in paradict.keys():
+            return
+
+        if "$X" not in paradict["target"]:
+            return
+
+        if isinstance(paradict["source"], str):
+            return paradict["source"].splitlines()[int(paradict["row"])].split()[int(paradict["column"])]
+        else:
+            raise TypeError, 'only support str type'
+
 class LEfromenv(logicalExp):
     def __init__(self, paradict=None):
         if paradict != None:
@@ -689,6 +771,21 @@ class LEfromenv(logicalExp):
 
         ret = paradict["env"].getdatabypath(paradict["path"])
         return ret
+
+    def genposval(self, paradict):
+        if "env" not in paradict.keys():
+            return
+        if "path" not in paradict.keys():
+            return
+
+        if "$X" in paradict["path"]:
+            raise ValueError, "not support $X in path now"
+
+        ret = paradict["env"].getdatabypath(paradict["path"])
+        if ret == None or ret == []:
+            return
+        else:
+            return random.choice(ret)
 
 class LEcmd(logicalExp):
     def __init__(self, paradict=None):
@@ -717,6 +814,22 @@ class LEcmd(logicalExp):
         else:
             return False
 
+    def genposval(self, paradict):
+        if "cmd" not in paradict.keys():
+            return
+
+        retcmd = ''
+        fd = open('/dev/urandom')
+        for n in self.paradict['cmd'].split():
+            if '$X' in n:
+                retcmd += fd.read(4)
+            else:
+                retcmd += n
+            retcmd += ' '
+
+        fd.close()
+        return retcmd
+
 class LEnegation(logicalExp):
     def __init__(self, paradict=None):
         if paradict != None:
@@ -733,6 +846,15 @@ class LEnegation(logicalExp):
         else:
             return False
 
+    def genposval(self, paradict):
+        if "target" not in paradict.keys():
+            return
+
+        fd = open('/dev/urandom')
+        ret = fd.read(4)
+        fd.close()
+
+        return ret
 #____________________________________________________
 
 class hypothesis:
@@ -826,18 +948,75 @@ class hypothesis:
         def _deepcheck(source, target):
             if isinstance(source, logicalExp):
                 for n in source.paradict.values():
-                    if target not in n:
-                        pass
-        if not isinstance(self.result, logicalExp):
-            print "error"
-            return
+                    if _deepcheck(n, target):
+                        return True
+                return False
+            elif isinstance(source, str):
+                if target in source:
+                    return True
+                else:
+                    return False
 
+            elif isinstance(source, virtEnv):
+                return False
+            else:
+                raise TypeError,'only support logicalExp and str'
+
+        if not isinstance(self.result, logicalExp):
+            raise ValueError, 'wrong result'
+
+        l1 = []
         retcmd = self.result.paradict['cmd']
         for n in retcmd.split():
             if "$X" in n:
-                for i in self.leset:
-                    _deepcheck(i, n)
+                l1.append(n)
 
+        replacedict = {}
+        tmpleset = deepcopy(self.leset)
+
+        self.printhypothesis()
+        print l1
+
+        if tmpleset == []:
+            return self.result.genrandom(env=env)
+
+        while(l1 != []):
+            for n in tmpleset:
+                found = ''
+                for i in l1:
+                    if _deepcheck(n, i):
+                        if found == '':
+                            found = i
+                        else:
+                            found = ''
+                            break
+
+                if found == '':
+                    continue
+
+                try:
+                    if found not in replacedict.keys():
+                        replacedict[found] = n.genrandom(env=env)
+                except TypeError:
+                    """ just gen a random strings"""
+                    replacedict[found] = genstring()
+
+                l1.remove(found)
+                break
+
+            for i in tmpleset:
+                i.replace(replacedict, env=env)
+
+        for n in replacedict.keys():
+            retcmd = retcmd.replace(n, replacedict[n])
+
+        return retcmd
+
+def genstring():
+    fd = open('/dev/urandom')
+    ret = fd.read(4)
+    fd.close()
+    return ret
 
 
 def cmdmatch(source, target, ret):
@@ -993,8 +1172,10 @@ def tmpexample():
 
     while(True):
         cmd = genvirshcmd(subcmd, options, hypothesises, env)
-        if cmd == None:
-            break
+        print cmd
+        if not genhypothesisV2(env, cmd, hypothesises):
+            print 'error'
+            return
 
     printhypothesises(hypothesises)
 
@@ -1005,8 +1186,7 @@ def printhypothesises(hypothesises):
                 m.printhypothesis()
 
 def genvirshcmd(subcmd, options, hypothesises, env):
-    pass
-    
+    return hypothesises['virsh']['domiftune'][2].foundposcmd(env)
 
 
 #___________________________________________
