@@ -8,6 +8,7 @@ import subprocess
 import re
 import math
 import trees
+import string
 from copy import deepcopy
 
 FILE1 = '/root/virsh.xml'
@@ -561,6 +562,26 @@ class logicalExp:
         ret += ")"
         return ret
 
+    def customprint(self, avoidenv=False):
+        first = True
+        ret = "%s(" % self.name
+        for i in self.paradict.keys():
+            if not first:
+                ret += ", "
+            if self.paradict[i] != "":
+                if isinstance(self.paradict[i], logicalExp):
+                    ret += self.paradict[i].customprint(avoidenv=avoidenv)
+                elif avoidenv and isinstance(self.paradict[i], virtEnv):
+                    ret += 'virtEnv'
+                else:
+                    ret +=str(self.paradict[i])
+            else:
+                ret += str(i)
+            first = False
+
+        ret += ")"
+        return ret
+
     def replace(self, replacedict, env=None):
         for source in replacedict.keys():
             for d,x in self.paradict.items():
@@ -600,6 +621,15 @@ class logicalExp:
 
     def genposval(self, paradict):
         raise NotImplementedError
+
+    def compare(self, targetle):
+        s = self.customprint(True)
+        t = targetle.customprint(True)
+
+        if s != t:
+            return False
+        else:
+            return True
 
 class LEin(logicalExp):
     def __init__(self, paradict=None):
@@ -695,10 +725,22 @@ class LEincolumn(logicalExp):
         if "column" not in paradict.keys():
             return False
 
-        if paradict["target"] in [i.split()[int(paradict["column"])] for i in paradict["source"].splitlines()]:
-            return True
-        else:
+        if isinstance(paradict["source"], str):
+            if paradict["target"] in [i.split()[int(paradict["column"])] for i in paradict["source"].splitlines()]:
+                return True
+            else:
+                return False
+        elif isinstance(paradict["source"], list):
+            for n in paradict["source"]:
+                try:
+                    if paradict["target"] in [i.split()[int(paradict["column"])] for i in n.splitlines()]:
+                        return True
+                except IndexError:
+                    continue
+
             return False
+        else:
+            raise TypeError, 'only support str,list type'
 
     def genposval(self, paradict):
         if "target" not in paradict.keys():
@@ -819,10 +861,9 @@ class LEcmd(logicalExp):
             return
 
         retcmd = ''
-        fd = open('/dev/urandom')
         for n in self.paradict['cmd'].split():
             if '$X' in n:
-                retcmd += fd.read(4)
+                retcmd += genstring()
             else:
                 retcmd += n
             retcmd += ' '
@@ -942,6 +983,7 @@ class hypothesis:
             print "output not except"
             return 1
 
+        print 'good!'
         return 0
 
     def foundposcmd(self, env):
@@ -974,9 +1016,6 @@ class hypothesis:
         replacedict = {}
         tmpleset = deepcopy(self.leset)
 
-        self.printhypothesis()
-        print l1
-
         if tmpleset == []:
             return self.result.genrandom(env=env)
 
@@ -998,7 +1037,7 @@ class hypothesis:
                     if found not in replacedict.keys():
                         replacedict[found] = n.genrandom(env=env)
                 except TypeError:
-                    """ just gen a random strings"""
+                    """ just gen a random string """
                     replacedict[found] = genstring()
 
                 l1.remove(found)
@@ -1013,11 +1052,11 @@ class hypothesis:
         return retcmd
 
 def genstring():
-    fd = open('/dev/urandom')
-    ret = fd.read(4)
-    fd.close()
-    return ret
-
+#    fd = open('/dev/urandom')
+#    ret = fd.read(4)
+#    fd.close()
+#    return ret
+    return ''.join(random.choice(string.letters) for i in range(4))
 
 def cmdmatch(source, target, ret):
     srclist = source.split()
@@ -1029,30 +1068,252 @@ def cmdmatch(source, target, ret):
         if "$X" in srclist[i] or "$X" in tgtlist[i]:
             if "$X" in srclist[i]:
                 ret[srclist[i]] = tgtlist[i]
+                continue
             if "$X" in tgtlist[i]:
                 ret[tgtlist[i]] = srclist[i]
-            continue
+                continue
         if srclist[i] != tgtlist[i]:
             return False
 
     return True
 
-def revisedhypothesis(hyp, hypothesises, data, env):
-    if "virsh" in data[0].split()[0]:
-        virshinfo = virshcmdinfo(data[0])
-        poslist = virshinfo.optvalueinfos.values()
+def lookslike(source, target):
+    sets = set(source.split())
+    sett = set(target.split())
+    return float(len(sets & sett))/len(sets)
+
+def classify(strings, sign=None):
+    try:
+        if lxml.etree.fromstring(strings):
+            print 'not support xml now'
+            return
+    except:
+        pass
+
+    """ should be output of cmd """
+    if strings.splitlines() == 1:
+        print 'so less info'
+        return
+
+    ret = {}
+    if sign == None:
+        sign = random.choice(strings.splitlines())
     else:
-        poslist = data[0].split()[1:]
+        for i in strings.splitlines():
+            if sign in i:
+                sign = i
+                break
 
-    for i in poslist:
-        tmplist = env.searchdata(i)
-        if tmplist == []:
+    pool = strings.splitlines()
+
+    for n in pool:
+        diff = 0
+        if n == '':
             continue
-        for n in tmplist:
-            if "Xpath" in n:
-                pass
 
+        if len(n.split()) > len(sign.split()):
+            diff += len(n.split()) - len(sign.split())
+            lenth = len(sign.split())
+        elif len(n.split()) < len(sign.split()):
+            diff += len(sign.split()) - len(n.split())
+            lenth = len(n.split())
+        else:
+            lenth = len(n.split())
 
+        for i in range(lenth):
+            if n.split()[i] != sign.split()[i]:
+                diff += 1
+
+        if diff not in ret.keys():
+            ret[diff] = [n]
+        else:
+            ret[diff].append(n)
+
+    return ret
+
+def hypcheckvalid(hypothesises, hyp):
+    for n in hypothesises:
+        stolen = {}
+        tmpleset = deepcopy(n.leset)
+        found = 0
+        for le in hyp.leset:
+            for i in tmpleset:
+                if le.compare(i):
+                    found += 1
+                    break
+
+        if found == len(hyp.leset):
+            return n
+
+    return
+
+def revisedhypothesis(hyp, hypothesises, data, env):
+    def subfunc(le, leresult, cmdline, env=None):
+        stolen = {}
+        if not cmdmatch(leresult.paradict["cmd"], cmdline, stolen):
+            raise ValueError, 'invalid hypothesis'
+        
+        tmple = deepcopy(le)
+
+        if env == None:
+            tmple.replace(stolen)
+        else:
+            tmple.replace(stolen, env)
+
+        if not tmple(tmple.paradict):
+            raise ValueError, 'invalid hypothesis'
+
+        if isinstance(tmple.paradict["source"], list):
+            if len(tmple.paradict["source"]) > 1:
+                raise ValueError, 'not support list now'
+
+            strings = tmple.paradict["source"][0]
+        else:
+            strings = tmple.paradict["source"]
+
+        target = tmple.paradict["target"]
+
+        return strings, target
+
+    """ 1: search in hypothesises find close hypothesis """
+    for n in hypothesises:
+        result = n.result
+        stolen = {}
+        if lookslike(result.paradict['output'], data[2]) < 0.4:
+            continue
+
+        if not cmdmatch(result.paradict["cmd"], data[0], stolen):
+            continue
+
+        tmpleset = deepcopy(n.leset)
+        tmphyp = hypothesis(cmd=data, env=deepcopy(env))
+        for i in tmpleset:
+            i.replace(stolen, env=env)
+            if i():
+                tmphyp.append(i)
+
+        if tmphyp.leset == []:
+            continue
+
+        LEcmdtmp = LEcmd({'cmd': data[0], 'ret': data[1], 'output': data[2]})
+        tmphyp.result = LEcmdtmp
+        tmphyp.tmpmergepara()
+        hypothesises.remove(n)
+        tmphyp.printhypothesis()
+        conflicthyp = hypcheckvalid(hypothesises, tmphyp)
+        if not conflicthyp:
+            hypothesises.append(tmphyp)
+            return True
+        else:
+            hypothesises.append(n)
+
+    """ 2: try harder, refactor old hypothesis """
+    for le in hyp.leset:
+        """ refactor the le """
+        if le.name not in  ['In', 'InColumn']:
+            """ TODO """
+            continue
+
+        csrc,ctgt = subfunc(le, hyp.result, hyp.cmd[0])
+        src,tgt = subfunc(le, hyp.result, data[0], env)
+
+        """ TODO: use a ML model to classify """
+        try:
+            if lxml.etree.fromstring(csrc):
+                print 'not support xml now'
+                return
+        except:
+            pass
+
+        for n in csrc.splitlines():
+            for c in range(len(n.split())):
+                if ctgt == n.split()[c]:
+                    ccolumn = c
+                    break
+
+        for n in src.splitlines():
+            for c in range(len(n.split())):
+                if tgt == n.split()[c]:
+                    column = c
+                    break
+
+        """ not correct here, why chose column ? """
+        if ccolumn != column:
+            cnewle = LEincolumn({"target": le.paradict['target'], "source": le.paradict['source'], "column": ccolumn})
+            newle = LEincolumn({"target": le.paradict['target'], "source": le.paradict['source'], "column": column})
+            hyp.leset.remove(le)
+            newhyp = deepcopy(hyp)
+            hyp.leset.append(cnewle)
+
+            newhyp.leset.append(newle)
+            stolen = {}
+            cmdmatch(newhyp.result.paradict["cmd"], data[0], stolen)
+            for i in newhyp.leset:
+                i.replace(stolen, env=env)
+            newhyp.result = LEcmd({'cmd': data[0], 'ret': data[1], 'output': data[2]})
+            newhyp.tmpmergepara()
+            print " ============= create a new hyp ============= "
+            newhyp.printhypothesis()
+            print " ============ refactor a old hyp ============ "
+            hyp.printhypothesis()
+            print " ============================================ "
+            hypothesises.append(newhyp)
+            return True
+        else:
+            """ try to split it """
+            ctmplist = [i.split()[column] for i in csrc.splitlines()]
+            tmplist = [i.split()[column] for i in src.splitlines()]
+            info = {}
+            for n in ctmplist:
+                if n in info.keys():
+                    info[n] += 1
+                else:
+                    info[n] = 1
+
+            for n in tmplist:
+                if n in info.keys():
+                    info[n] += 1
+                else:
+                    info[n] = 1
+
+            if info[tgt] == info[ctgt]:
+                """TODO"""
+                continue
+
+            if info[tgt] > info[ctgt]:
+                newle = LEincolumn({"target": le.paradict['target'], "source": le.paradict['source'], "column": column})
+                newle2 = LEin({'target': le.paradict['target'], 'source': tgt})
+                cnewle2 = LEnegation({'target': newle2})
+            else:
+                newle = LEincolumn({"target": le.paradict['target'], "source": le.paradict['source'], "column": column})
+                cnewle2 = LEin({'target': le.paradict['target'], 'source': ctgt})
+                newle2 = LEnegation({'target': newle2})
+
+            hyp.leset.remove(le)
+            newhyp = deepcopy(hyp)
+            hyp.leset.append(newle)
+            hyp.leset.append(cnewle2)
+            newhyp.leset.append(newle)
+            newhyp.leset.append(newle2)
+            stolen = {}
+            cmdmatch(newhyp.result.paradict["cmd"], data[0], stolen)
+            for i in newhyp.leset:
+                i.replace(stolen, env=env)
+            newhyp.result = LEcmd({'cmd': data[0], 'ret': data[1], 'output': data[2]})
+            newhyp.tmpmergepara()
+            if newle2.name == 'In':
+                """ work around """
+                newle2.paradict['source'] = tgt
+            print " ============= create a new hyp ============= "
+            newhyp.printhypothesis()
+            print " ============ refactor a old hyp ============ "
+            hyp.printhypothesis()
+            print " ============================================ "
+            hypothesises.append(newhyp)
+            return True
+
+    print 'fail to revise hypothesis'
+    return False
 
 def genhypothesisV2(env, cmd, hypothesises):
     """ TODO: split sub cmd and options """
@@ -1081,21 +1342,22 @@ def genhypothesisV2(env, cmd, hypothesises):
         tmpret = tmphyp.checkhypothesis(env, data)
         if tmpret == 0:
             print "a good hypothesis for a case"
-            return True
-        elif tmpret == 2:
-            print "a case not cover"
+            tmphyp.printhypothesis()
             print cmd
             print out
+            return True
+        elif tmpret == 2:
+#            print "a case not cover"
             continue
         else:
             print "result not correct"
+            tmphyp.printhypothesis()
             print cmd
             print out
-#            if revisedhypothesis(tmphyp, subhypothesises, data, env):
-#                return True
-#            else:
-#                return False
-            return False
+            if revisedhypothesis(tmphyp, subhypothesises, data, env):
+                return True
+            else:
+                return False
 
     if ret == 0:
         possible = {}
@@ -1163,7 +1425,7 @@ def tmpexample():
     env = virtEnv()
     hypothesises = {}
     subcmd = "virsh domiftune"
-    options = ["test4", "rhel7.0 52:54:00:67:a9:e7", "rhel7.0", "rhel7.0 123"]
+    options = ["test4", "rhel7.0 52:54:00:67:a9:e7", "rhel7.0", "rhel7.0 123" , "2131 123535", "3 123"]
     for i in options:
         cmd = "%s %s" % (subcmd, i)
         if not genhypothesisV2(env, cmd, hypothesises):
