@@ -208,7 +208,6 @@ def gendata(cmdinfo, cmdname,virshcmd):
             ret[str(i)] = 100/number
         number = number + 100/number
 
-
     for i in cmdinfo.split():
         if i in ['is','are','to','be','on','at','were','was',]:
             number = number - 1
@@ -537,15 +536,15 @@ class logicalExp:
         self.name = name
         self.paradict = paradict
 
-    def __call__(self, paradict=None):
+    def __call__(self, paradict=None, exdict=None):
         if paradict == None:
             paradict = deepcopy(self.paradict)
 
         for i in paradict.keys():
             if isinstance(paradict[i], logicalExp):
-                paradict[i] = paradict[i]()
+                paradict[i] = paradict[i](exdict=exdict)
 
-        return self.subfunc(paradict)
+        return self.subfunc(paradict, exdict=exdict)
 
     def __str__(self):
         first = True
@@ -603,7 +602,7 @@ class logicalExp:
                     if env != None:
                         self.paradict[d] = env
 
-    def subfunc(self, paradict):
+    def subfunc(self, paradict, exdict=None):
         raise NotImplementedError
 
     def genrandom(self, paradict=None, env=None):
@@ -638,7 +637,7 @@ class LEin(logicalExp):
         else:
             logicalExp.__init__(self, "In", {"target": '', "source": ''})
 
-    def subfunc(self, paradict):
+    def subfunc(self, paradict, exdict=None):
         if "target" not in paradict.keys():
             return False
         if "source" not in paradict.keys():
@@ -681,7 +680,7 @@ class LEinrow(logicalExp):
         else:
             logicalExp.__init__(self, "InRow", {"target": '', "source": '', "row": ''})
 
-    def subfunc(self, paradict):
+    def subfunc(self, paradict, exdict=None):
         if "target" not in paradict.keys():
             return False
         if "source" not in paradict.keys():
@@ -717,7 +716,7 @@ class LEincolumn(logicalExp):
         else:
             logicalExp.__init__(self, "InColumn", {"target": '', "source": '', "column": ''})
 
-    def subfunc(self, paradict):
+    def subfunc(self, paradict, exdict=None):
         if "target" not in paradict.keys():
             return False
         if "source" not in paradict.keys():
@@ -765,7 +764,7 @@ class LEinpath(logicalExp):
         else:
             logicalExp.__init__(self, "InPath", {"target": '', "source": '', "row": '', "column": ''})
 
-    def subfunc(self, paradict):
+    def subfunc(self, paradict, exdict=None):
         if "target" not in paradict.keys():
             return False
         if "source" not in paradict.keys():
@@ -775,10 +774,44 @@ class LEinpath(logicalExp):
         if "column" not in paradict.keys():
             return False
 
-        if paradict["target"] == paradict["source"].splitlines()[int(paradict["row"])].split()[int(paradict["column"])]:
-            return True
-        else:
+        if isinstance(paradict["source"], str):
+            if "$Y" == paradict['row']:
+                if exdict != {} and exdict != None:
+                    paradict['row'] = exdict['$Y']
+                elif exdict == {}:
+                    for n in range(len(paradict["source"].splitlines())):
+                        if paradict["target"] == paradict["source"].splitlines()[n].split()[int(paradict["column"])]:
+                            exdict['$Y'] = n
+                            return True
+                    return False
+                else:
+                    raise ValueError, '$Y in paradict but no exdict'
+
+            if paradict["target"] == paradict["source"].splitlines()[int(paradict["row"])].split()[int(paradict["column"])]:
+                return True
+            else:
+                return False
+        elif isinstance(paradict["source"], list):
+            for n in paradict["source"]:
+                if "$Y" == paradict['row']:
+                    if exdict != {} and exdict != None:
+                        paradict['row'] = exdict['$Y']
+                    elif exdict == {}:
+                        for m in range(len(n.splitlines())):
+                            if paradict["target"] == n.splitlines()[m].split()[int(paradict["column"])]:
+                                exdict['$Y'] = m
+                                return True
+
+                        continue
+                    else:
+                        raise ValueError, '$Y in paradict but no exdict'
+
+                if paradict["target"] == n.splitlines()[int(paradict["row"])].split()[int(paradict["column"])]:
+                    return True
+
             return False
+        else:
+            raise TypeError, 'only support str,list type'
 
     def genposval(self, paradict):
         if "target" not in paradict.keys():
@@ -792,11 +825,17 @@ class LEinpath(logicalExp):
 
         if "$X" not in paradict["target"]:
             return
+        if "$Y" not in paradict["row"]:
+            return paradict["source"].splitlines()[int(paradict["row"])].split()[int(paradict["column"])]
 
         if isinstance(paradict["source"], str):
-            return paradict["source"].splitlines()[int(paradict["row"])].split()[int(paradict["column"])]
+            ranrow = random.choice(paradict["source"].splitlines())
+            return ranrow.split()[int(paradict["column"])]
+        elif isinstance(paradict["source"], list):
+            ranrow = random.choice(random.choice(paradict["source"].splitlines()))
+            return ranrow.split()[int(paradict["column"])]
         else:
-            raise TypeError, 'only support str type'
+            raise TypeError, 'only support str,list type'
 
 class LEfromenv(logicalExp):
     def __init__(self, paradict=None):
@@ -805,7 +844,7 @@ class LEfromenv(logicalExp):
         else:
             logicalExp.__init__(self, "fromEnv", {"env": '', "path": ''})
 
-    def subfunc(self, paradict):
+    def subfunc(self, paradict, exdict=None):
         if "env" not in paradict.keys():
             return False
         if "path" not in paradict.keys():
@@ -836,7 +875,7 @@ class LEcmd(logicalExp):
         else:
             logicalExp.__init__(self, "cmd", {"cmd": '', "ret": '', "output": ''})
 
-    def subfunc(self, paradict):
+    def subfunc(self, paradict, exdict=None):
         if "cmd" not in paradict.keys():
             return False
         if "ret" not in paradict.keys():
@@ -868,7 +907,6 @@ class LEcmd(logicalExp):
                 retcmd += n
             retcmd += ' '
 
-        fd.close()
         return retcmd
 
 class LEnegation(logicalExp):
@@ -878,7 +916,7 @@ class LEnegation(logicalExp):
         else:
             logicalExp.__init__(self, "negation", {"target": ''})
 
-    def subfunc(self, paradict):
+    def subfunc(self, paradict, exdict=None):
         if "target" not in paradict.keys():
             return False
 
@@ -891,11 +929,7 @@ class LEnegation(logicalExp):
         if "target" not in paradict.keys():
             return
 
-        fd = open('/dev/urandom')
-        ret = fd.read(4)
-        fd.close()
-
-        return ret
+        return genstring()
 #____________________________________________________
 
 class hypothesis:
@@ -916,7 +950,12 @@ class hypothesis:
             count = 0
             for i in data.keys():
                 if isinstance(data[i], str):
-                    if opt in data[i]:
+                    """ fixme: just a work around """
+                    if '/' in data[i]:
+                        if opt in data[i].split('/'):
+                            data[i] = data[i].replace(opt, target)
+                        continue
+                    elif opt in data[i]:
                         data[i] = data[i].replace(opt, target)
                         count += 1
 
@@ -937,11 +976,37 @@ class hypothesis:
         for opt in opts:
             count = 0
             for i in self.leset:
-                count += _parse(i.paradict, opt, "$X%s" % index)
+                count += _parse(i.paradict, opt, "$X%d" % index)
 
             if count != 0 or self.leset == []:
-                _parse(self.result.paradict, opt, "$X%s" % index)
+                _parse(self.result.paradict, opt, "$X%d" % index)
                 index += 1
+
+        """TODO: move to a split func"""
+        """ drop some similar le """
+        remove = []
+        for n in self.leset:
+            base = n.customprint(True)
+            if n in remove:
+                continue
+            for m in self.leset:
+                target = m.customprint(True)
+                if m in remove:
+                    continue
+                val = lookslike(base, target)
+                if val == 1 or val < 0.6:
+                    continue
+                if base.count('$Y') > 0 or target.count('$Y') > 0:
+                    continue
+                if base.count('$X') > target.count('$X'):
+                    remove.append(m)
+                    continue
+                elif base.count('$X') < target.count('$X'):
+                    remove.append(n)
+                    break
+
+        for i in remove:
+            self.leset.remove(i)
 
     def mergehypothesis(hypothesises):
         for i in hypothesises:
@@ -964,9 +1029,10 @@ class hypothesis:
             return 2
 
         tmpleset = deepcopy(self.leset)
+        exdict = {}
         for i in tmpleset:
             i.replace(stolen, env=env)
-            if not i():
+            if not i(exdict=exdict):
                 return 2
 
         result = deepcopy(self.result)
@@ -1000,6 +1066,8 @@ class hypothesis:
                     return False
 
             elif isinstance(source, virtEnv):
+                return False
+            elif isinstance(source, int):
                 return False
             else:
                 raise TypeError,'only support logicalExp and str'
@@ -1039,6 +1107,8 @@ class hypothesis:
                 except TypeError:
                     """ just gen a random string """
                     replacedict[found] = genstring()
+                except ValueError:
+                    continue
 
                 l1.remove(found)
                 break
@@ -1078,9 +1148,27 @@ def cmdmatch(source, target, ret):
     return True
 
 def lookslike(source, target):
-    sets = set(source.split())
-    sett = set(target.split())
-    return float(len(sets & sett))/len(sets)
+    if len(source.split()) < 10 or len(target.split()) < 10:
+        n = 0
+        tmplist = []
+        while(n < len(source)):
+            tmplist.append(source[n:n+2])
+            tmplist.append(source[n+1:n+3])
+            n += 2
+        sets = set(tmplist)
+        n = 0
+        tmplist = []
+        while(n < len(target)):
+            tmplist.append(target[n:n+2])
+            tmplist.append(target[n+1:n+3])
+            n += 2
+        sett = set(tmplist)
+
+    else:
+        sets = set(source.split())
+        sett = set(target.split())
+
+    return float(len(sets & sett))/len(sets | sett)
 
 def classify(strings, sign=None):
     try:
@@ -1225,16 +1313,18 @@ def revisedhypothesis(hyp, hypothesises, data, env):
         except:
             pass
 
-        for n in csrc.splitlines():
-            for c in range(len(n.split())):
-                if ctgt == n.split()[c]:
+        for n in range(len(csrc.splitlines())):
+            for c in range(len(csrc.splitlines()[n].split())):
+                if ctgt == csrc.splitlines()[n].split()[c]:
                     ccolumn = c
+                    crow = n
                     break
 
-        for n in src.splitlines():
-            for c in range(len(n.split())):
-                if tgt == n.split()[c]:
+        for n in range(len(src.splitlines())):
+            for c in range(len(src.splitlines()[n].split())):
+                if tgt == src.splitlines()[n].split()[c]:
                     column = c
+                    row = n
                     break
 
         """ not correct here, why chose column ? """
@@ -1264,11 +1354,12 @@ def revisedhypothesis(hyp, hypothesises, data, env):
             ctmplist = [i.split()[column] for i in csrc.splitlines()]
             tmplist = [i.split()[column] for i in src.splitlines()]
             info = {}
+            cinfo = {}
             for n in ctmplist:
-                if n in info.keys():
-                    info[n] += 1
+                if n in cinfo.keys():
+                    cinfo[n] += 1
                 else:
-                    info[n] = 1
+                    cinfo[n] = 1
 
             for n in tmplist:
                 if n in info.keys():
@@ -1276,18 +1367,73 @@ def revisedhypothesis(hyp, hypothesises, data, env):
                 else:
                     info[n] = 1
 
-            if info[tgt] == info[ctgt]:
-                """TODO"""
+            if info[tgt] == cinfo[ctgt]:
+                """ need try harder and harder... """
+                """ search more info (Why?) """
+                print src.splitlines()[row].split()
+                for n in range(len(src.splitlines()[row].split())):
+                    if n == column:
+                        continue
+                    tgt2 = src.splitlines()[row].split()[n]
+                    ctgt2 = csrc.splitlines()[crow].split()[n]
+                    if tgt2 == ctgt2:
+                        continue
+
+                    ctmplist2 = [i.split()[n] for i in csrc.splitlines()]
+                    tmplist2 = [i.split()[n] for i in src.splitlines()]
+                    info2 = {}
+                    cinfo2 = {}
+                    for m in ctmplist2:
+                        if m in cinfo2.keys():
+                            cinfo2[m] += 1
+                        else:
+                            cinfo2[m] = 1
+
+                    for m in tmplist2:
+                        if m in info2.keys():
+                            info2[m] += 1
+                        else:
+                            info2[m] = 1
+
+                    if info2[tgt2] > cinfo2[ctgt2]:
+                        newle = LEinpath({"target": le.paradict['target'], "source": le.paradict['source'], "column": column, "row": '$Y'})
+                        newle2 = LEinpath({"target": tgt2, "source": le.paradict['source'], "column": n, "row": '$Y'})
+                        cnewle2 = LEnegation({'target': newle2})
+                    else:
+                        newle = LEinpath({"target": le.paradict['target'], "source": le.paradict['source'], "column": column, "row": '$Y'})
+                        cnewle2 = LEinpath({"target": ctgt2, "source": le.paradict['source'], "column": n, "row": '$Y'})
+                        newle2 = LEnegation({'target': cnewle2})
+
+                    hyp.leset.remove(le)
+                    newhyp = deepcopy(hyp)
+                    hyp.leset.append(newle)
+                    hyp.leset.append(cnewle2)
+                    newhyp.leset.append(newle)
+                    newhyp.leset.append(newle2)
+                    stolen = {}
+                    cmdmatch(newhyp.result.paradict["cmd"], data[0], stolen)
+                    for i in newhyp.leset:
+                        i.replace(stolen, env=env)
+                    newhyp.result = LEcmd({'cmd': data[0], 'ret': data[1], 'output': data[2]})
+                    newhyp.tmpmergepara()
+                    print " ============= create a new hyp ============= "
+                    newhyp.printhypothesis()
+                    print " ============ refactor a old hyp ============ "
+                    hyp.printhypothesis()
+                    print " ============================================ "
+                    hypothesises.append(newhyp)
+                    return True
+
                 continue
 
-            if info[tgt] > info[ctgt]:
+            if info[tgt] > cinfo[ctgt]:
                 newle = LEincolumn({"target": le.paradict['target'], "source": le.paradict['source'], "column": column})
                 newle2 = LEin({'target': le.paradict['target'], 'source': tgt})
                 cnewle2 = LEnegation({'target': newle2})
             else:
                 newle = LEincolumn({"target": le.paradict['target'], "source": le.paradict['source'], "column": column})
                 cnewle2 = LEin({'target': le.paradict['target'], 'source': ctgt})
-                newle2 = LEnegation({'target': newle2})
+                newle2 = LEnegation({'target': cnewle2})
 
             hyp.leset.remove(le)
             newhyp = deepcopy(hyp)
@@ -1304,6 +1450,9 @@ def revisedhypothesis(hyp, hypothesises, data, env):
             if newle2.name == 'In':
                 """ work around """
                 newle2.paradict['source'] = tgt
+            if cnewle2.name == 'In':
+                """ work around """
+                cnewle2.paradict['source'] = ctgt
             print " ============= create a new hyp ============= "
             newhyp.printhypothesis()
             print " ============ refactor a old hyp ============ "
@@ -1389,10 +1538,11 @@ def genhypothesisV2(env, cmd, hypothesises):
             tmpdict = {}
             if not cmdmatch(tmphyp.result.paradict['cmd'], cmd, tmpdict):
                 continue
+            exdict = {}
             for le in tmphyp.leset:
                 lecpy = deepcopy(le)
                 lecpy.replace(tmpdict)
-                if lecpy():
+                if lecpy(exdict=exdict):
                     hyp.append(lecpy)
                 else:
                     LEnegationtmp = LEnegation({'target': lecpy})
@@ -1424,8 +1574,10 @@ def genhypothesisV2(env, cmd, hypothesises):
 def tmpexample():
     env = virtEnv()
     hypothesises = {}
-    subcmd = "virsh domiftune"
-    options = ["test4", "rhel7.0 52:54:00:67:a9:e7", "rhel7.0", "rhel7.0 123" , "2131 123535", "3 123"]
+#    subcmd = "virsh domiftune"
+#    options = ["test4", "rhel7.0 52:54:00:67:a9:e7", "rhel7.0", "rhel7.0 123" , "2131 123535", "3 123"]
+    subcmd = 'virsh blockjob'
+    options = ['rhel7.0-rhel vda', 'rhel7.0-rhel', 'rhel7.0 vda', '123 345']
     for i in options:
         cmd = "%s %s" % (subcmd, i)
         if not genhypothesisV2(env, cmd, hypothesises):
@@ -1448,8 +1600,10 @@ def printhypothesises(hypothesises):
                 m.printhypothesis()
 
 def genvirshcmd(subcmd, options, hypothesises, env):
-    return hypothesises['virsh']['domiftune'][2].foundposcmd(env)
-
+    lay1 = random.choice(hypothesises.keys())
+    lay2 = random.choice(hypothesises[lay1].keys())
+    lay3 = random.choice(hypothesises[lay1][lay2])
+    return lay3.foundposcmd(env)
 
 #___________________________________________
 
